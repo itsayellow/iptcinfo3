@@ -34,7 +34,7 @@ debugMode = 0
 #  Debug off for production use
 
 # Turn off logging to stderr unless requested by caller
-logging.getLogger("foo").addHandler(logging.NullHandler())
+logging.getLogger("iptcinfo").addHandler(logging.NullHandler())
 logger = logging.getLogger("iptcinfo")
 LOGDBG = logging.getLogger("iptcinfo.debug")
 
