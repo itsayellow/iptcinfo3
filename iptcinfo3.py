@@ -24,31 +24,32 @@ import shutil
 import sys
 import tempfile
 from struct import pack, unpack
-import json
 
-__version__ = '2.1.4'
-__author__ = 'Gulácsi, Tamás'
-__updated_by__ = 'Campbell, James'
+__version__ = "2.1.4"
+__author__ = "Gulácsi, Tamás"
+__updated_by__ = "Campbell, James"
 
 SURELY_WRITE_CHARSET_INFO = False
 debugMode = 0
 #  Debug off for production use
 
+# Turn off logging to stderr unless requested by caller
+logging.getLogger("foo").addHandler(logging.NullHandler())
+logger = logging.getLogger("iptcinfo")
+LOGDBG = logging.getLogger("iptcinfo.debug")
 
-logger = logging.getLogger('iptcinfo')
-LOGDBG = logging.getLogger('iptcinfo.debug')
-
-SOI = 0xd8  # Start of image
-APP0 = 0xe0  # Exif
-APP1 = 0xe1  # Exif
-APP13 = 0xed  # Photoshop3 IPTC
-COM = 0xfe  # Comment
-SOS = 0xda  # Start of scan
-EOI = 0xd9  # End of image
+SOI = 0xD8  # Start of image
+APP0 = 0xE0  # Exif
+APP1 = 0xE1  # Exif
+APP13 = 0xED  # Photoshop3 IPTC
+COM = 0xFE  # Comment
+SOS = 0xDA  # Start of scan
+EOI = 0xD9  # End of image
 
 
 # Misc utilities
 ################
+
 
 @contextlib.contextmanager
 def smart_open(path, *args, **kwargs):
@@ -57,7 +58,7 @@ def smart_open(path, *args, **kwargs):
 
     Based on https://stackoverflow.com/a/17603000/8049516
     """
-    if hasattr(path, 'read'):
+    if hasattr(path, "read"):
         fh = path
     else:
         fh = open(path, *args, **kwargs)
@@ -87,27 +88,29 @@ def hex_dump(dump):
     Create an xxd style hex dump from a binary dump.
     """
     length = len(dump)
-    P = lambda z: chr(z) if ord3(z) >= 0x21 and ord3(z) <= 0x7e else '.'  # noqa: E731
+    P = lambda z: chr(z) if ord3(z) >= 0x21 and ord3(z) <= 0x7E else "."  # noqa: E731
     ROWLEN = 18
-    res = ['\n']
+    res = ["\n"]
     for j in range(length // ROWLEN + int(length % ROWLEN > 0)):
-        row = dump[j * ROWLEN:(j + 1) * ROWLEN]
+        row = dump[j * ROWLEN : (j + 1) * ROWLEN]
         if isinstance(row, list):
-            row = b''.join(row)
+            row = b"".join(row)
         res.append(
-            ('%02X ' * len(row) + '   ' * (ROWLEN - len(row)) + '| %s\n') %
-            tuple(list(row) + [''.join(map(P, row))]))
-    return ''.join(res)
+            ("%02X " * len(row) + "   " * (ROWLEN - len(row)) + "| %s\n")
+            % tuple(list(row) + ["".join(map(P, row))])
+        )
+    return "".join(res)
 
 
 # File utilities
 ################
 # Should we just use .read and .seek?
 
+
 class EOFException(Exception):
     def __init__(self, *args):
         super().__init__(self)
-        self._str = '\n'.join(args)
+        self._str = "\n".join(args)
 
     def __str__(self):
         return self._str
@@ -119,7 +122,7 @@ def read_exactly(fh, length):
     """
     buf = fh.read(length)
     if buf is None or len(buf) < length:
-        raise EOFException('read_exactly: %s' % str(fh))
+        raise EOFException("read_exactly: %s" % str(fh))
 
     return buf
 
@@ -131,11 +134,12 @@ def seek_exactly(fh, length):
     pos = fh.tell()
     fh.seek(length, 1)
     if fh.tell() - pos != length:
-        raise EOFException('seek_exactly')
+        raise EOFException("seek_exactly")
 
 
 # JPEG utilities
 ################
+
 
 def file_is_jpeg(fh):
     """
@@ -151,7 +155,7 @@ def file_is_jpeg(fh):
     ered = False
     try:
         (ff, soi) = fh.read(2)
-        if not (ff == 0xff and soi == SOI):
+        if not (ff == 0xFF and soi == SOI):
             ered = False
         else:
             # now check for APP0 marker. I'll assume that anything with a
@@ -159,7 +163,7 @@ def file_is_jpeg(fh):
             # (We're not dinking with image data, so anything following
             # the Jpeg tagging system should work.)
             (ff, app0) = fh.read(2)
-            ered = ff == 0xff
+            ered = ff == 0xFF
     finally:
         fh.seek(0)
         return ered
@@ -171,10 +175,10 @@ def jpeg_get_variable_length(fh):
     to JPEGNextMarker. File position is updated to just past the
     length field."""
     try:
-        length = unpack('!H', read_exactly(fh, 2))[0]
+        length = unpack("!H", read_exactly(fh, 2))[0]
     except EOFException:
         return 0
-    logger.debug('JPEG variable length: %d', length)
+    logger.debug("JPEG variable length: %d", length)
 
     # Length includes itself, so must be at least 2
     if length < 2:
@@ -192,14 +196,14 @@ def jpeg_next_marker(fh):
     # Find 0xff byte. We should already be on it.
     try:
         byte = read_exactly(fh, 1)
-        while ord3(byte) != 0xff:
+        while ord3(byte) != 0xFF:
             # logger.warning("jpeg_next_marker: bogus stuff in Jpeg file at: ')
             byte = read_exactly(fh, 1)
 
         # Now skip any extra 0xffs, which are valid padding.
         while True:
             byte = read_exactly(fh, 1)
-            if ord3(byte) != 0xff:
+            if ord3(byte) != 0xFF:
                 break
 
     except EOFException:
@@ -249,15 +253,15 @@ def jpeg_collect_file_parts(fh, discard_app_parts=False):
 
     Returns None if a file parsing error occured.
     """
-    adobeParts = b''
+    adobeParts = b""
     start = []
     fh.seek(0)
     (ff, soi) = fh.read(2)
-    if not (ord3(ff) == 0xff and ord3(soi) == SOI):
-        raise Exception('invalid start of file, is it a Jpeg?')
+    if not (ord3(ff) == 0xFF and ord3(soi) == SOI):
+        raise Exception("invalid start of file, is it a Jpeg?")
 
     # Begin building start of file
-    start.append(pack('BB', 0xff, SOI))  # pack('BB', ff, soi)
+    start.append(pack("BB", 0xFF, SOI))  # pack('BB', ff, soi)
 
     # Get first marker. This *should* be APP0 for JFIF or APP1 for EXIF
     marker = ord(jpeg_next_marker(fh))
@@ -269,26 +273,26 @@ def jpeg_collect_file_parts(fh, discard_app_parts=False):
             break
 
     # print('first marker: %02X %02X' % (marker, APP0))
-    app0data = b''
+    app0data = b""
     app0data = jpeg_skip_variable(fh, app0data)
     if app0data is None:
-        raise Exception('jpeg_skip_variable failed')
+        raise Exception("jpeg_skip_variable failed")
 
     if marker == APP0 or not discard_app_parts:
         # Always include APP0 marker at start if it's present.
-        start.append(pack('BB', 0xff, marker))
+        start.append(pack("BB", 0xFF, marker))
         # Remember that the length must include itself (2 bytes)
-        start.append(pack('!H', len(app0data) + 2))
+        start.append(pack("!H", len(app0data) + 2))
         start.append(app0data)
     else:
         # Manually insert APP0 if we're trashing application parts, since
         # all JFIF format images should start with the version block.
-        LOGDBG.debug('discard_app_parts=%s', discard_app_parts)
-        start.append(pack("BB", 0xff, APP0))
-        start.append(pack("!H", 16))    # length (including these 2 bytes)
-        start.append(b'JFIF')  # format
+        LOGDBG.debug("discard_app_parts=%s", discard_app_parts)
+        start.append(pack("BB", 0xFF, APP0))
+        start.append(pack("!H", 16))  # length (including these 2 bytes)
+        start.append(b"JFIF")  # format
         start.append(pack("BB", 1, 2))  # call it version 1.2 (current JFIF)
-        start.append(pack('8B', 0, 0, 0, 0, 0, 0, 0, 0))  # zero everything else
+        start.append(pack("8B", 0, 0, 0, 0, 0, 0, 0, 0))  # zero everything else
 
     # Now scan through all markers in file until we hit image data or
     # IPTC stuff.
@@ -296,39 +300,39 @@ def jpeg_collect_file_parts(fh, discard_app_parts=False):
     while True:
         marker = jpeg_next_marker(fh)
         if marker is None or ord3(marker) == 0:
-            raise Exception('Marker scan failed')
+            raise Exception("Marker scan failed")
 
         # Check for end of image
         elif ord3(marker) == EOI:
             logger.debug("jpeg_collect_file_parts: saw end of image marker")
-            end.append(pack("BB", 0xff, ord3(marker)))
+            end.append(pack("BB", 0xFF, ord3(marker)))
             break
 
         # Check for start of compressed data
         elif ord3(marker) == SOS:
             logger.debug("jpeg_collect_file_parts: saw start of compressed data")
-            end.append(pack("BB", 0xff, ord3(marker)))
+            end.append(pack("BB", 0xFF, ord3(marker)))
             break
 
-        partdata = b''
+        partdata = b""
         partdata = jpeg_skip_variable(fh, partdata)
         if not partdata:
-            raise Exception('jpeg_skip_variable failed')
+            raise Exception("jpeg_skip_variable failed")
 
         partdata = bytes(partdata)
 
         # Take all parts aside from APP13, which we'll replace ourselves.
-        if discard_app_parts and ord3(marker) >= APP0 and ord3(marker) <= 0xef:
+        if discard_app_parts and ord3(marker) >= APP0 and ord3(marker) <= 0xEF:
             # Skip all application markers, including Adobe parts
-            adobeParts = b''
-        elif ord3(marker) == 0xed:
+            adobeParts = b""
+        elif ord3(marker) == 0xED:
             # Collect the adobe stuff from part 13
             adobeParts = collect_adobe_parts(partdata)
             break
 
         else:
             # Append all other parts to start section
-            start.append(pack("BB", 0xff, ord3(marker)))
+            start.append(pack("BB", 0xFF, ord3(marker)))
             start.append(pack("!H", len(partdata) + 2))
             start.append(partdata)
 
@@ -340,31 +344,30 @@ def jpeg_collect_file_parts(fh, discard_app_parts=False):
 
         end.append(buff)
 
-    return (b''.join(start), b''.join(end), adobeParts)
+    return (b"".join(start), b"".join(end), adobeParts)
 
 
 def jpeg_debug_scan(filename):  # pragma: no cover
     """Also very helpful when debugging."""
     assert isinstance(filename, str) and os.path.isfile(filename)
-    with open(filename, 'wb') as fh:
-
+    with open(filename, "wb") as fh:
         # Skip past start of file marker
         (ff, soi) = fh.read(2)
-        if not (ord3(ff) == 0xff and ord3(soi) == SOI):
+        if not (ord3(ff) == 0xFF and ord3(soi) == SOI):
             logger.error("jpeg_debug_scan: invalid start of file")
         else:
             # scan to 0xDA (start of scan), dumping the markers we see between
             # here and there.
             while True:
                 marker = jpeg_next_marker(fh)
-                if ord3(marker) == 0xda:
+                if ord3(marker) == 0xDA:
                     break
 
                 if ord3(marker) == 0:
                     logger.warning("Marker scan failed")
                     break
 
-                elif ord3(marker) == 0xd9:
+                elif ord3(marker) == 0xD9:
                     logger.debug("Marker scan hit end of image marker")
                     break
 
@@ -385,26 +388,26 @@ def collect_adobe_parts(data):
     offset = 0
     out = []
     # Skip preamble
-    offset = len('Photoshop 3.0 ')
+    offset = len("Photoshop 3.0 ")
     # Process everything
     while offset < length:
         # Get OSType and ID
-        (ostype, id1, id2) = unpack("!LBB", data[offset:offset + 6])
+        (ostype, id1, id2) = unpack("!LBB", data[offset : offset + 6])
         offset += 6
         if offset >= length:
             break
 
         # Get pascal string
-        stringlen = unpack("B", data[offset:offset + 1])[0]
+        stringlen = unpack("B", data[offset : offset + 1])[0]
         offset += 1
         if offset >= length:
             break
 
-        string = data[offset:offset + stringlen]
+        string = data[offset : offset + stringlen]
         offset += stringlen
 
         # round up if odd
-        if (stringlen % 2 != 0):
+        if stringlen % 2 != 0:
             offset += 1
         # there should be a null if string len is 0
         if stringlen == 0:
@@ -413,12 +416,12 @@ def collect_adobe_parts(data):
             break
 
         # Get variable-size data
-        size = unpack("!L", data[offset:offset + 4])[0]
+        size = unpack("!L", data[offset : offset + 4])[0]
         offset += 4
         if offset >= length:
             break
 
-        var = data[offset:offset + size]
+        var = data[offset : offset + size]
         offset += size
         if size % 2 != 0:
             offset += 1  # round up if odd
@@ -432,11 +435,11 @@ def collect_adobe_parts(data):
                 out.append(pack("B", 0))
             out.append(pack("!L", size))
             out.append(var)
-            out = [b''.join(out)]
+            out = [b"".join(out)]
             if size % 2 != 0 and len(out[0]) % 2 != 0:
                 out.append(pack("B", 0))
 
-    return b''.join(out)
+    return b"".join(out)
 
 
 #####################################
@@ -445,91 +448,99 @@ def collect_adobe_parts(data):
 # are in %listdatasets below.
 c_datasets = {
     # 0: 'record version',    # skip -- binary data
-    5: 'object name',
-    7: 'edit status',
-    8: 'editorial update',
-    10: 'urgency',
-    12: 'subject reference',
-    15: 'category',
-    20: 'supplemental category',
-    22: 'fixture identifier',
-    25: 'keywords',
-    26: 'content location code',
-    27: 'content location name',
-    30: 'release date',
-    35: 'release time',
-    37: 'expiration date',
-    38: 'expiration time',
-    40: 'special instructions',
-    42: 'action advised',
-    45: 'reference service',
-    47: 'reference date',
-    50: 'reference number',
-    55: 'date created',
-    60: 'time created',
-    62: 'digital creation date',
-    63: 'digital creation time',
-    65: 'originating program',
-    70: 'program version',
-    75: 'object cycle',
-    80: 'by-line',
-    85: 'by-line title',
-    90: 'city',
-    92: 'sub-location',
-    95: 'province/state',
-    100: 'country/primary location code',
-    101: 'country/primary location name',
-    103: 'original transmission reference',
-    105: 'headline',
-    110: 'credit',
-    115: 'source',
-    116: 'copyright notice',
-    118: 'contact',
-    120: 'caption/abstract',
-    121: 'local caption',
-    122: 'writer/editor',
+    5: "object name",
+    7: "edit status",
+    8: "editorial update",
+    10: "urgency",
+    12: "subject reference",
+    15: "category",
+    20: "supplemental category",
+    22: "fixture identifier",
+    25: "keywords",
+    26: "content location code",
+    27: "content location name",
+    30: "release date",
+    35: "release time",
+    37: "expiration date",
+    38: "expiration time",
+    40: "special instructions",
+    42: "action advised",
+    45: "reference service",
+    47: "reference date",
+    50: "reference number",
+    55: "date created",
+    60: "time created",
+    62: "digital creation date",
+    63: "digital creation time",
+    65: "originating program",
+    70: "program version",
+    75: "object cycle",
+    80: "by-line",
+    85: "by-line title",
+    90: "city",
+    92: "sub-location",
+    95: "province/state",
+    100: "country/primary location code",
+    101: "country/primary location name",
+    103: "original transmission reference",
+    105: "headline",
+    110: "credit",
+    115: "source",
+    116: "copyright notice",
+    118: "contact",
+    120: "caption/abstract",
+    121: "local caption",
+    122: "writer/editor",
     # 125: 'rasterized caption', # unsupported (binary data)
-    130: 'image type',
-    131: 'image orientation',
-    135: 'language identifier',
-    200: 'custom1',  # These are NOT STANDARD, but are used by
-    201: 'custom2',  # Fotostation. Use at your own risk. They're
-    202: 'custom3',  # here in case you need to store some special
-    203: 'custom4',  # stuff, but note that other programs won't
-    204: 'custom5',  # recognize them and may blow them away if
-    205: 'custom6',  # you open and re-save the file. (Except with
-    206: 'custom7',  # Fotostation, of course.)
-    207: 'custom8',
-    208: 'custom9',
-    209: 'custom10',
-    210: 'custom11',
-    211: 'custom12',
-    212: 'custom13',
-    213: 'custom14',
-    214: 'custom15',
-    215: 'custom16',
-    216: 'custom17',
-    217: 'custom18',
-    218: 'custom19',
-    219: 'custom20',
+    130: "image type",
+    131: "image orientation",
+    135: "language identifier",
+    200: "custom1",  # These are NOT STANDARD, but are used by
+    201: "custom2",  # Fotostation. Use at your own risk. They're
+    202: "custom3",  # here in case you need to store some special
+    203: "custom4",  # stuff, but note that other programs won't
+    204: "custom5",  # recognize them and may blow them away if
+    205: "custom6",  # you open and re-save the file. (Except with
+    206: "custom7",  # Fotostation, of course.)
+    207: "custom8",
+    208: "custom9",
+    209: "custom10",
+    210: "custom11",
+    211: "custom12",
+    212: "custom13",
+    213: "custom14",
+    214: "custom15",
+    215: "custom16",
+    216: "custom17",
+    217: "custom18",
+    218: "custom19",
+    219: "custom20",
 }
 
 c_datasets_r = {v: k for k, v in c_datasets.items()}
 
-c_charset = {100: 'iso8859_1', 101: 'iso8859_2', 109: 'iso8859_3',
-             110: 'iso8859_4', 111: 'iso8859_5', 125: 'iso8859_7',
-             127: 'iso8859_6', 138: 'iso8859_8',
-             196: 'utf_8'}
+c_charset = {
+    100: "iso8859_1",
+    101: "iso8859_2",
+    109: "iso8859_3",
+    110: "iso8859_4",
+    111: "iso8859_5",
+    125: "iso8859_7",
+    127: "iso8859_6",
+    138: "iso8859_8",
+    196: "utf_8",
+}
 c_charset_r = {v: k for k, v in c_charset.items()}
 
 
 class IPTCData(dict):
     """Dict with int/string keys from c_listdatanames"""
+
     def __init__(self, diction={}, *args, **kwds):
         super().__init__(self, *args, **kwds)
         self.update({self._key_as_int(k): v for k, v in diction.items()})
 
-    c_cust_pre = 'nonstandard_'
+    c_cust_pre = "nonstandard_"
 
     @classmethod
     def _key_as_int(cls, key):
@@ -537,11 +548,11 @@ class IPTCData(dict):
             return key
         elif isinstance(key, str) and key.lower() in c_datasets_r:
             return c_datasets_r[key.lower()]
-        elif key.startswith(cls.c_cust_pre) and key[len(cls.c_cust_pre):].isdigit():
+        elif key.startswith(cls.c_cust_pre) and key[len(cls.c_cust_pre) :].isdigit():
             # example: nonstandard_69 -> 69
-            return int(key[len(cls.c_cust_pre):])
+            return int(key[len(cls.c_cust_pre) :])
         else:
-            raise KeyError('Key %s is not in %s!' % (key, c_datasets_r.keys()))
+            raise KeyError("Key %s is not in %s!" % (key, c_datasets_r.keys()))
 
     @classmethod
     def _key_as_str(cls, key):
@@ -600,13 +611,11 @@ class IPTCInfo:
     error = None
 
     def __init__(self, fobj, force=False, inp_charset=None, out_charset=None):
-        self._data = IPTCData({
-            'supplemental category': [],
-            'keywords': [],
-            'contact': [],
-        })
+        self._data = IPTCData(
+            {"supplemental category": [], "keywords": [], "contact": []}
+        )
         self._fobj = fobj
-        if duck_typed(fobj, 'read'):  # DELETEME
+        if duck_typed(fobj, "read"):  # DELETEME
             self._filename = None
         else:
             self._filename = fobj
@@ -614,14 +623,14 @@ class IPTCInfo:
         self.inp_charset = inp_charset
         self.out_charset = out_charset or inp_charset
 
-        with smart_open(self._fobj, 'rb') as fh:
+        with smart_open(self._fobj, "rb") as fh:
             datafound = self.scanToFirstIMMTag(fh)
             if datafound or force:
                 # Do the real snarfing here
                 if datafound:
                     self.collectIIMInfo(fh)
             else:
-                logger.warning('No IPTC data found in %s', fobj)
+                logger.warning("No IPTC data found in %s", fobj)
 
     def _filepos(self, fh):
         """For debugging, return what position in the file we are."""
@@ -636,35 +645,35 @@ class IPTCInfo:
 
     def save_as(self, newfile, options=None):
         """Saves Jpeg with IPTC data to a given file name."""
-        with smart_open(self._fobj, 'rb') as fh:
+        with smart_open(self._fobj, "rb") as fh:
             if not file_is_jpeg(fh):
-                logger.error('Source file %s is not a Jpeg.' % self._fob)
+                logger.error("Source file %s is not a Jpeg." % self._fob)
                 return None
 
             jpeg_parts = jpeg_collect_file_parts(fh)
 
         if jpeg_parts is None:
-            raise Exception('jpeg_collect_file_parts failed: %s' % self.error)
+            raise Exception("jpeg_collect_file_parts failed: %s" % self.error)
 
         (start, end, adobe) = jpeg_parts
-        LOGDBG.debug('start: %d, end: %d, adobe: %d', *map(len, jpeg_parts))
+        LOGDBG.debug("start: %d, end: %d, adobe: %d", *map(len, jpeg_parts))
         hex_dump(start)
-        LOGDBG.debug('adobe1: %r', adobe)
-        if options is not None and 'discardAdobeParts' in options:
+        LOGDBG.debug("adobe1: %r", adobe)
+        if options is not None and "discardAdobeParts" in options:
             adobe = None
-            LOGDBG.debug('adobe2: %r', adobe)
+            LOGDBG.debug("adobe2: %r", adobe)
 
-        LOGDBG.info('writing...')
+        LOGDBG.info("writing...")
         (tmpfd, tmpfn) = tempfile.mkstemp()
         if self._filename and os.path.exists(self._filename):
             shutil.copystat(self._filename, tmpfn)
-        tmpfh = os.fdopen(tmpfd, 'wb')
+        tmpfh = os.fdopen(tmpfd, "wb")
         if not tmpfh:
             logger.error("Can't open output file %r", tmpfn)
             return None
 
-        LOGDBG.debug('start=%d end=%d', len(start), len(end))
-        LOGDBG.debug('start len=%d dmp=%s', len(start), hex_dump(start))
+        LOGDBG.debug("start=%d end=%d", len(start), len(end))
+        LOGDBG.debug("start len=%d dmp=%s", len(start), hex_dump(start))
         # FIXME `start` contains the old IPTC data, so the next we read, we'll get the wrong data
         tmpfh.write(start)
         # character set
@@ -672,19 +681,19 @@ class IPTCInfo:
         # writing the character set is not the best practice
         # - couldn't find the needed place (record) for it yet!
         if SURELY_WRITE_CHARSET_INFO and ch is not None:
-            tmpfh.write(pack("!BBBHH", 0x1c, 1, 90, 4, ch))
+            tmpfh.write(pack("!BBBHH", 0x1C, 1, 90, 4, ch))
 
-        LOGDBG.debug('pos: %d', self._filepos(tmpfh))
+        LOGDBG.debug("pos: %d", self._filepos(tmpfh))
         data = self.photoshopIIMBlock(adobe, self.packedIIMData())
-        LOGDBG.debug('data len=%d dmp=%s', len(data), hex_dump(data))
+        LOGDBG.debug("data len=%d dmp=%s", len(data), hex_dump(data))
         tmpfh.write(data)
-        LOGDBG.debug('pos: %d', self._filepos(tmpfh))
+        LOGDBG.debug("pos: %d", self._filepos(tmpfh))
         tmpfh.write(end)
-        LOGDBG.debug('pos: %d', self._filepos(tmpfh))
+        LOGDBG.debug("pos: %d", self._filepos(tmpfh))
         tmpfh.flush()
 
-        if hasattr(tmpfh, 'getvalue'):  # StringIO
-            fh2 = open(newfile, 'wb')
+        if hasattr(tmpfh, "getvalue"):  # StringIO
+            fh2 = open(newfile, "wb")
             fh2.truncate()
             fh2.seek(0, 0)
             fh2.write(tmpfh.getvalue())
@@ -694,7 +703,11 @@ class IPTCInfo:
             os.unlink(tmpfn)
         else:
             tmpfh.close()
-            if os.path.exists(newfile) and options is not None and 'overwrite' in options:
+            if (
+                os.path.exists(newfile)
+                and options is not None
+                and "overwrite" in options
+            ):
                 os.unlink(newfile)
             elif os.path.exists(newfile):
                 shutil.move(newfile, "{file}~".format(file=newfile))
@@ -719,7 +732,7 @@ class IPTCInfo:
         self._data[key] = value
 
     def __str__(self):
-        return 'charset:\t%s\ndata:\t%s' % (self.inp_charset, self._data)
+        return "charset:\t%s\ndata:\t%s" % (self.inp_charset, self._data)
 
     def scanToFirstIMMTag(self, fh):
         """Scans to first IIM Record 2 tag in the file. The will either
@@ -732,9 +745,11 @@ class IPTCInfo:
             logger.warning("File not a JPEG, trying blindScan")
             return self.blindScan(fh)
 
-    c_marker_err = {0: "Marker scan failed",
-                    0xd9: "Marker scan hit EOI (end of image) marker",
-                    0xda: "Marker scan hit start of image data"}
+    c_marker_err = {
+        0: "Marker scan failed",
+        0xD9: "Marker scan hit EOI (end of image) marker",
+        0xDA: "Marker scan hit start of image data",
+    }
 
     def jpegScan(self, fh):
         """Assuming the file is a Jpeg (see above), this will scan through
@@ -748,7 +763,7 @@ class IPTCInfo:
         except EOFException:
             return None
 
-        if not (ord3(ff) == 0xff and ord3(soi) == SOI):
+        if not (ord3(ff) == 0xFF and ord3(soi) == SOI):
             self.error = "JpegScan: invalid start of file"
             logger.error(self.error)
             return None
@@ -757,7 +772,7 @@ class IPTCInfo:
         while True:
             err = None
             marker = jpeg_next_marker(fh)
-            if ord3(marker) == 0xed:
+            if ord3(marker) == 0xED:
                 break  # 237
 
             err = self.c_marker_err.get(ord3(marker), None)
@@ -782,7 +797,7 @@ class IPTCInfo:
         offset = 0
         # keep within first 819200 bytes
         # NOTE: this may need to change
-        logger.debug('blindScan: starting scan, max length %d', MAX)
+        logger.debug("blindScan: starting scan, max length %d", MAX)
 
         # start digging
         while offset <= MAX:
@@ -792,7 +807,7 @@ class IPTCInfo:
                 logger.warning("BlindScan: hit EOF while scanning")
                 return None
             # look for tag identifier 0x1c
-            if ord3(temp) == 0x1c:
+            if ord3(temp) == 0x1C:
                 # if we found that, look for record 2, dataset 0
                 # (record version number)
                 (record, dataset) = fh.read(2)
@@ -801,14 +816,19 @@ class IPTCInfo:
                     try:
                         temp = read_exactly(fh, jpeg_get_variable_length(fh))
                         try:
-                            cs = unpack('!H', temp)[0]
+                            cs = unpack("!H", temp)[0]
                         except Exception:  # TODO better exception
-                            logger.warning('WARNING: problems with charset recognition (%r)', temp)
+                            logger.warning(
+                                "WARNING: problems with charset recognition (%r)", temp
+                            )
                             cs = None
                         if cs in c_charset:
                             self.inp_charset = c_charset[cs]
-                        logger.info("BlindScan: found character set '%s' at offset %d",
-                                    self.inp_charset, offset)
+                        logger.info(
+                            "BlindScan: found character set '%s' at offset %d",
+                            self.inp_charset,
+                            offset,
+                        )
                     except EOFException:
                         pass
 
@@ -847,24 +867,26 @@ class IPTCInfo:
 
             (tag, record, dataset, length) = unpack("!BBBH", header)
             # bail if we're past end of IIM record 2 data
-            if not (tag == 0x1c and record == 2):
+            if not (tag == 0x1C and record == 2):
                 return None
 
-            alist = {'tag': tag, 'record': record, 'dataset': dataset, 'length': length}
-            logger.debug('\t'.join('%s: %s' % (k, v) for k, v in alist.items()))
+            alist = {"tag": tag, "record": record, "dataset": dataset, "length": length}
+            logger.debug("\t".join("%s: %s" % (k, v) for k, v in alist.items()))
             value = fh.read(length)
 
             if self.inp_charset:
                 try:
-                    value = str(value, encoding=self.inp_charset, errors='strict')
+                    value = str(value, encoding=self.inp_charset, errors="strict")
                 except Exception:  # TODO better exception
-                    logger.warning('Data "%r" is not in encoding %s!', value, self.inp_charset)
-                    value = str(value, encoding=self.inp_charset, errors='replace')
+                    logger.warning(
+                        'Data "%r" is not in encoding %s!', value, self.inp_charset
+                    )
+                    value = str(value, encoding=self.inp_charset, errors="replace")
 
             # try to extract first into _listdata (keywords, categories)
             # and, if unsuccessful, into _data. Tags which are not in the
             # current IIM spec (version 4) are currently discarded.
-            if dataset in self._data and hasattr(self._data[dataset], 'append'):
+            if dataset in self._data and hasattr(self._data[dataset], "append"):
                 self._data[dataset].append(value)
             elif dataset != 0:
                 self._data[dataset] = value
@@ -878,14 +900,17 @@ class IPTCInfo:
         res = text
         out_charset = self.out_charset or self.inp_charset
         if isinstance(text, str):
-            res = text.encode(out_charset or 'utf8')
+            res = text.encode(out_charset or "utf8")
         elif isinstance(text, str) and out_charset:
             try:
-                res = str(text, encoding=self.inp_charset).encode(
-                    out_charset)
+                res = str(text, encoding=self.inp_charset).encode(out_charset)
             except (UnicodeEncodeError, UnicodeDecodeError):
-                logger.error("_enc: charset %s is not working for %s", self.inp_charset, text)
-                res = str(text, encoding=self.inp_charset, errors='replace').encode(out_charset)
+                logger.error(
+                    "_enc: charset %s is not working for %s", self.inp_charset, text
+                )
+                res = str(text, encoding=self.inp_charset, errors="replace").encode(
+                    out_charset
+                )
         elif isinstance(text, (list, tuple)):
             res = type(text)(list(map(self._enc, text)))
         return res
@@ -894,22 +919,26 @@ class IPTCInfo:
         """Assembles and returns our _data and _listdata into IIM format for
         embedding into an image."""
         out = []
-        (tag, record) = (0x1c, 0x02)
+        (tag, record) = (0x1C, 0x02)
         # Print record version
         # tag - record - dataset - len (short) - 4 (short)
         out.append(pack("!BBBHH", tag, record, 0, 2, 4))
 
-        LOGDBG.debug('out=%s', hex_dump(out))
+        LOGDBG.debug("out=%s", hex_dump(out))
         # Iterate over data sets
         for dataset, value in self._data.items():
             if len(value) == 0:
                 continue
 
             if not (isinstance(dataset, int) and dataset in c_datasets):
-                logger.warning("packedIIMData: illegal dataname '%s' (%d)", dataset, dataset)
+                logger.warning(
+                    "packedIIMData: illegal dataname '%s' (%d)", dataset, dataset
+                )
                 continue
 
-            logger.debug('packedIIMData %02X: %r -> %r', dataset, value, self._enc(value))
+            logger.debug(
+                "packedIIMData %02X: %r -> %r", dataset, value, self._enc(value)
+            )
             value = self._enc(value)
             if not isinstance(value, list):
                 value = bytes(value)
@@ -923,7 +952,7 @@ class IPTCInfo:
                     out.append(pack("!BBBH", tag, record, dataset, len(v)))
                     out.append(v)
 
-        return b''.join(out)
+        return b"".join(out)
 
     def photoshopIIMBlock(self, otherparts, data):
         """Assembles the blob of Photoshop "resource data" that includes our
@@ -947,22 +976,22 @@ class IPTCInfo:
         # Finally tack on other data
         if otherparts is not None:
             resourceBlock.append(otherparts)
-        resourceBlock = b''.join(resourceBlock)
+        resourceBlock = b"".join(resourceBlock)
 
-        out.append(pack("BB", 0xff, 0xed))  # Jpeg start of block, APP13
+        out.append(pack("BB", 0xFF, 0xED))  # Jpeg start of block, APP13
         out.append(pack("!H", len(resourceBlock) + 2))  # length
         out.append(resourceBlock)
 
-        return b''.join(out)
+        return b"".join(out)
 
 
-if __name__ == '__main__':  # pragma: no cover
+if __name__ == "__main__":  # pragma: no cover
     logging.basicConfig(level=logging.ERROR)
     if len(sys.argv) > 1:
         info = IPTCInfo(sys.argv[1])
-        if info.__dict__ != '':
+        if info.__dict__ != "":
             for k, v in info.__dict__.items():
-                if k == '_data':
+                if k == "_data":
                     print(k)
                     for key, value in v.items():
                         if type(value) == list:
